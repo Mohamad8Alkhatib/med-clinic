@@ -4,12 +4,9 @@ namespace App\Http\Controllers\Doctor;
 
 use App\Http\Controllers\Controller;
 use App\Models\Appointment;
-use App\Models\User;
-use Carbon\Carbon;
-use http\Message;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use function Laravel\Prompts\error;
+use Illuminate\Validation\Rule;
 
 class DoctorManagerController extends Controller
 {
@@ -17,6 +14,9 @@ class DoctorManagerController extends Controller
     {
         $doctorId = Auth::user()->doctor->id;
         $date = request('date', now()->toDateString());
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
+            $date = now()->toDateString();
+        }
 
         $todayAppointments = Appointment::query()
             ->where('doctor_id', $doctorId)
@@ -41,18 +41,19 @@ class DoctorManagerController extends Controller
 
     public function updateStatus(Request $request, $id)
     {
+        $validated = $request->validate([
+            'status' => ['required', Rule::in(['cancelled', 'confirmed', 'completed'])],
+            'doctor_notes' => ['nullable', 'string', 'max:2000'],
+        ]);
+
         $appointment = Appointment::findOrFail($id);
         $doctorId = \auth()->user()->doctor->id;
-        $allowed = ['cancelled', 'confirmed', 'completed'];
-        $status = $request->input('status');
+        $status = $validated['status'];
         $currentStatus = $appointment->status;
 
         if ($appointment->doctor_id != $doctorId) {
             return back()->with('error', 'Unauthorized to edit');
         }
-        if (!in_array($status, $allowed))
-            return back()->with('error', 'Invalid value');
-
         if ($currentStatus == 'cancelled' || $currentStatus == 'completed')
             return back()->with('error', 'Cannot edit appointment status');
 
@@ -77,9 +78,13 @@ class DoctorManagerController extends Controller
                 break;
             case 'confirmed':
                 if ($status == 'completed') {
+                    if (empty($validated['doctor_notes'])) {
+                        return back()->with('error', 'Doctor notes are required when completing an appointment.');
+                    }
+
                     $appointment->update([
                         'status' => 'completed',
-                        'doctor_notes' => $request->input('doctor_notes'),
+                        'doctor_notes' => $validated['doctor_notes'],
                     ]);
                 }
                 elseif ($status == 'cancelled') {
