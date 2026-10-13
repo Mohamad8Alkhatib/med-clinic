@@ -8,8 +8,9 @@ use App\Models\Doctor;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-
-use function Illuminate\Support\now;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 class PatientController extends Controller
 {
@@ -25,7 +26,14 @@ class PatientController extends Controller
 
     public function createAppointment(Doctor $doctor, Request $request)
     {
+        if (!$doctor->is_active) {
+            abort(404);
+        }
+
         $selectedDate = $request->query('date', date('Y-m-d'));
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $selectedDate)) {
+            $selectedDate = date('Y-m-d');
+        }
 
         $bookedSlots = Appointment::query()
             ->where('doctor_id', $doctor->id)
@@ -41,31 +49,55 @@ class PatientController extends Controller
     public function store(Request $request)
     {
         $validator = $request->validate([
-            'doctor_id' => 'required|exists:doctors,id',
+            'doctor_id' => ['required', Rule::exists('doctors', 'id')->whereNull('deleted_at')->where('is_active', true)],
             'appointment_date' => 'required|date|after_or_equal:today',
-            'appointment_time' => 'required',
-            'patient_notes' => 'nullable|string'
+            'appointment_time' => 'required|date_format:H:i',
+            'patient_notes' => 'nullable|string|max:1000'
         ]);
 
-        $exists = Appointment::query()
-            ->where('doctor_id', $request->doctor_id)
-            ->where('appointment_date', $request->appointment_date)
-            ->where('appointment_time', $request->appointment_time)
-            ->where('status', '!=', 'cancelled')
-            ->exists();
+        $doctor = Doctor::query()->findOrFail($validator['doctor_id']);
+        $selectedTime = Carbon::createFromFormat('H:i', $validator['appointment_time']);
+        $start = Carbon::createFromTime(9, 0);
+        $end = Carbon::createFromTime(17, 0);
+        $availableSlots = [];
 
-        if ($exists) {
-            return back()->with('error', 'Sorry, this time slot is already booked. Please choose another time.');
+        while ($start->lt($end)) {
+            $availableSlots[] = $start->format('H:i');
+            $start->addMinutes($doctor->appointment_duration);
         }
 
-        Appointment::create([
-            'patient_id' => Auth::id(),
-            'doctor_id' => $validator['doctor_id'],
-            'appointment_date' => $validator['appointment_date'],
-            'appointment_time' => $validator['appointment_time'],
-            'patient_notes' => $validator['patient_notes'],
-            'status' => 'pending'
-        ]);
+        if (!in_array($selectedTime->format('H:i'), $availableSlots, true)) {
+            throw ValidationException::withMessages([
+                'appointment_time' => 'Invalid appointment time for this doctor.',
+            ]);
+        }
+
+        DB::transaction(function () use ($validator) {
+            Doctor::query()->whereKey($validator['doctor_id'])->lockForUpdate()->firstOrFail();
+
+            $exists = Appointment::query()
+                ->where('doctor_id', $validator['doctor_id'])
+                ->where('appointment_date', $validator['appointment_date'])
+                ->where('appointment_time', $validator['appointment_time'])
+                ->where('status', '!=', 'cancelled')
+                ->exists();
+
+            if ($exists) {
+                throw ValidationException::withMessages([
+                    'appointment_time' => 'Sorry, this time slot is already booked. Please choose another time.',
+                ]);
+            }
+
+            Appointment::create([
+                'patient_id' => Auth::id(),
+                'doctor_id' => $validator['doctor_id'],
+                'appointment_date' => $validator['appointment_date'],
+                'appointment_time' => $validator['appointment_time'],
+                'patient_notes' => $validator['patient_notes'] ?? null,
+                'status' => 'pending'
+            ]);
+        });
+
         return redirect('patient/my-appointments')->with('success', 'Appointment booked successfully!');
     }
 
