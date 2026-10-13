@@ -39,19 +39,25 @@ class AdminController extends Controller
 
     public function appointmentReport(Request $request)
     {
+        $validated = $request->validate([
+            'doctor_id' => ['nullable', 'integer', 'exists:doctors,id'],
+            'status' => ['nullable', 'in:pending,confirmed,cancelled,completed'],
+            'date' => ['nullable', 'date'],
+        ]);
+
         //get relation for filter
         $doctors = Doctor::with('user')->get();
 
         $query = Appointment::with(['doctor.user', 'patient']);
 
-        if ($request->filled('doctor_id')) {
-            $query->where('doctor_id', $request->doctor_id);
+        if (!empty($validated['doctor_id'])) {
+            $query->where('doctor_id', $validated['doctor_id']);
         }
-        if ($request->filled('status')) {
-            $query->where('status', $request->status);
+        if (!empty($validated['status'])) {
+            $query->where('status', $validated['status']);
         }
-        if ($request->filled('date')) {
-            $query->where('appointment_date', $request->date);
+        if (!empty($validated['date'])) {
+            $query->whereDate('appointment_date', $validated['date']);
         }
         //sort results latest first
         $appointments = $query->orderBy('appointment_date', 'desc')->get();

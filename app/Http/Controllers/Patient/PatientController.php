@@ -30,14 +30,14 @@ class PatientController extends Controller
             abort(404);
         }
 
-        $selectedDate = $request->query('date', date('Y-m-d'));
-        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $selectedDate)) {
-            $selectedDate = date('Y-m-d');
-        }
+        $validated = $request->validate([
+            'date' => ['nullable', 'date', 'after_or_equal:today'],
+        ]);
+        $selectedDate = $validated['date'] ?? date('Y-m-d');
 
         $bookedSlots = Appointment::query()
             ->where('doctor_id', $doctor->id)
-            ->where('appointment_date', $selectedDate)
+            ->whereDate('appointment_date', $selectedDate)
             ->where('status', '!=', 'cancelled')
             ->pluck('appointment_time')
             ->map(fn($time) => Carbon::parse($time)->format('H:i'))
@@ -122,6 +122,14 @@ class PatientController extends Controller
 
         if (!$appointment) {
             return back()->with('error', 'Appointment not found or unauthorized.');
+        }
+
+        if (!$appointment->canBeCancelled()) {
+            return back()->with('error', 'Appointments can only be cancelled at least 24 hours before the appointment time.');
+        }
+
+        if (in_array($appointment->status, ['cancelled', 'completed'], true)) {
+            return back()->with('error', 'This appointment can no longer be cancelled.');
         }
 
         $appointment->update([

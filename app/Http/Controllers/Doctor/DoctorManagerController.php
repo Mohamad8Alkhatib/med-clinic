@@ -13,10 +13,10 @@ class DoctorManagerController extends Controller
     public function index()
     {
         $doctorId = Auth::user()->doctor->id;
-        $date = request('date', now()->toDateString());
-        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
-            $date = now()->toDateString();
-        }
+        $validated = request()->validate([
+            'date' => ['nullable', 'date'],
+        ]);
+        $date = $validated['date'] ?? now()->toDateString();
 
         $todayAppointments = Appointment::query()
             ->where('doctor_id', $doctorId)
@@ -46,14 +46,14 @@ class DoctorManagerController extends Controller
             'doctor_notes' => ['nullable', 'string', 'max:2000'],
         ]);
 
-        $appointment = Appointment::findOrFail($id);
         $doctorId = \auth()->user()->doctor->id;
+        $appointment = Appointment::query()
+            ->whereKey($id)
+            ->where('doctor_id', $doctorId)
+            ->firstOrFail();
         $status = $validated['status'];
         $currentStatus = $appointment->status;
 
-        if ($appointment->doctor_id != $doctorId) {
-            return back()->with('error', 'Unauthorized to edit');
-        }
         if ($currentStatus == 'cancelled' || $currentStatus == 'completed')
             return back()->with('error', 'Cannot edit appointment status');
 
@@ -66,10 +66,14 @@ class DoctorManagerController extends Controller
                 if ($status == 'cancelled') {
                     $appointment->update([
                         'status' => 'cancelled',
+                        'cancelled_by' => \auth()->id(),
+                        'cancelled_at' => now(),
                     ]);
                 } elseif ($status == 'confirmed') {
                     $appointment->update([
                         'status' => 'confirmed',
+                        'cancelled_by' => null,
+                        'cancelled_at' => null,
                     ]);
                 }
                 else {
@@ -90,6 +94,8 @@ class DoctorManagerController extends Controller
                 elseif ($status == 'cancelled') {
                     $appointment->update([
                         'status' => 'cancelled',
+                        'cancelled_by' => \auth()->id(),
+                        'cancelled_at' => now(),
                     ]);
                 }
                 else {

@@ -5,7 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Specialty;
 use Illuminate\Http\Request;
-use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Validation\Rule;
 
 class SpecialtyController extends Controller
 {
@@ -31,11 +31,17 @@ class SpecialtyController extends Controller
      */
     public function store(Request $request)
     {
-        $request->validate([
-            'name' => 'required|unique:specialties,name',
+        $validated = $request->validate([
+            'name' => [
+                'required',
+                'string',
+                'max:255',
+                Rule::unique('specialties', 'name')->whereNull('deleted_at'),
+            ],
             'description' => 'nullable|string|max:500'
         ]);
-        Specialty::create($request->only('name', 'description'));
+
+        Specialty::create($validated);
 
         return redirect()->back()->with('success', 'Specialty added successfully');
     }
